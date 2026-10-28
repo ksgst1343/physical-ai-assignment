@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Training outputs
+outputs/
+checkpoints/
+wandb/
+
+# Datasets / large files
+*.hdf5
+*.parquet
+*.mp4
+*.bag
+*.db3
+
+# OS / editor
+.DS_Store
+.vscode/
