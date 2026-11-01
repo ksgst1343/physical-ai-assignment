@@ -2,7 +2,14 @@
   "env": {
     "name": "gym_hil",
     "task": "PandaPickCubeKeyboard-v0",
-    "fps": 10
+    "fps": 10,
+    "processor": {
+      "control_mode": "keyboard",
+      "reset": {
+        "control_time_s": 120.0,
+        "terminate_on_success": true
+      }
+    }
   },
   "dataset": {
     "repo_id": "ksgst1343/panda_pick_cube",
