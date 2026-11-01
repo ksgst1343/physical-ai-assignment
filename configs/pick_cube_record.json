@@ -12,7 +12,7 @@
     }
   },
   "dataset": {
-    "repo_id": "ksgst1343/panda_pick_cube",
+    "repo_id": "ksgst1343/panda_pick_cube_v3",
     "root": null,
     "task": "pick_cube",
     "num_episodes_to_record": 30,

@@ -1,20 +1,55 @@
 # Python
 .venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Training outputs
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials*.json
+token*.json
+
+# Training, evaluation, datasets, and caches
 outputs/
 checkpoints/
 wandb/
-
-# Datasets / large files
-*.hdf5
+data/
+datasets/
+.cache/
+huggingface/
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.bin
 *.parquet
-*.mp4
+*.arrow
+*.hdf5
 *.bag
 *.db3
+*.mp4
+*.avi
+*.mov
 
-# OS / editor
+# Local backups and temporary files
+*.bak
+*.bak2
+*_backup*
+*.tmp
+*.log
+*Zone.Identifier
+
+# OS and editors
 .DS_Store
+Thumbs.db
 .vscode/
+.idea/

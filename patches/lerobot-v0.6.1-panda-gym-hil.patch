@@ -1,0 +1,276 @@
+diff --git a/src/lerobot/datasets/dataset_metadata.py b/src/lerobot/datasets/dataset_metadata.py
+index 5b823a9e..9382d9e8 100644
+--- a/src/lerobot/datasets/dataset_metadata.py
++++ b/src/lerobot/datasets/dataset_metadata.py
+@@ -152,13 +152,11 @@ class LeRobotDatasetMetadata:
+         if not hasattr(self, "_metadata_buffer") or len(self._metadata_buffer) == 0:
+             return
+ 
+-        combined_dict = {}
++        all_keys = list(dict.fromkeys(key for episode_dict in self._metadata_buffer for key in episode_dict))
++        combined_dict = {key: [] for key in all_keys}
+         for episode_dict in self._metadata_buffer:
+-            for key, value in episode_dict.items():
+-                if key not in combined_dict:
+-                    combined_dict[key] = []
+-                # Extract value and serialize numpy arrays
+-                # because PyArrow's from_pydict function doesn't support numpy arrays
++            for key in all_keys:
++                value = episode_dict.get(key)
+                 val = value[0] if isinstance(value, list) else value
+                 combined_dict[key].append(val.tolist() if isinstance(val, np.ndarray) else val)
+ 
+diff --git a/src/lerobot/datasets/video_utils.py b/src/lerobot/datasets/video_utils.py
+index ef3005dd..6f8d3b7b 100644
+--- a/src/lerobot/datasets/video_utils.py
++++ b/src/lerobot/datasets/video_utils.py
+@@ -20,6 +20,7 @@ import logging
+ import os
+ import queue
+ import shutil
++import subprocess
+ import tempfile
+ import threading
+ import warnings
+@@ -697,55 +698,41 @@ def concatenate_video_files(
+                     f"Input video {input_path} is not compatible with the reference video {input_video_paths[0]}."
+                 )
+ 
+-    # Create a temporary .ffconcat file to list the input video paths
++    # Create a temporary ffconcat file
+     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
+         tmp_concatenate_file.write("ffconcat version 1.0\n")
+         for input_path in input_video_paths:
+-            tmp_concatenate_file.write(f"file '{str(input_path.resolve())}'\n")
+-        tmp_concatenate_file.flush()
++            tmp_concatenate_file.write(f"file '{str(Path(input_path).resolve())}'\n")
+         tmp_concatenate_path = tmp_concatenate_file.name
+ 
+-    # Create input and output containers
+-    input_container = av.open(
+-        tmp_concatenate_path, mode="r", format="concat", options={"safe": "0"}
+-    )  # safe = 0 allows absolute paths as well as relative paths
+-
++    # Write to a temporary output first because output_video_path can also be an input file.
+     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
+         tmp_output_video_path = tmp_named_file.name
+ 
+-    output_container = av.open(
+-        tmp_output_video_path, mode="w", options={"movflags": "faststart"}
+-    )  # faststart is to move the metadata to the beginning of the file to speed up loading
+-
+-    # Replicate input streams in output container
+-    stream_map = {}
+-    for input_stream in input_container.streams:
+-        if input_stream.type in ("video", "audio", "subtitle"):  # only copy compatible streams
+-            stream_map[input_stream.index] = output_container.add_stream_from_template(
+-                template=input_stream, opaque=True
+-            )
+-
+-            # set the time base to the input stream time base (missing in the codec context)
+-            stream_map[input_stream.index].time_base = input_stream.time_base
+-
+-    # Demux + remux packets (no re-encode)
+-    for packet in input_container.demux():
+-        # Skip packets from un-mapped streams
+-        if packet.stream.index not in stream_map:
+-            continue
+-
+-        # Skip demux flushing packets
+-        if packet.dts is None:
+-            continue
+-
+-        output_stream = stream_map[packet.stream.index]
+-        packet.stream = output_stream
+-        output_container.mux(packet)
+-
+-    input_container.close()
+-    output_container.close()
+-    shutil.move(tmp_output_video_path, output_video_path)
+-    Path(tmp_concatenate_path).unlink()
++    try:
++        cmd = [
++            "ffmpeg",
++            "-hide_banner",
++            "-loglevel",
++            "error",
++            "-y",
++            "-f",
++            "concat",
++            "-safe",
++            "0",
++            "-i",
++            tmp_concatenate_path,
++            "-c",
++            "copy",
++            "-movflags",
++            "+faststart",
++            tmp_output_video_path,
++        ]
++        subprocess.run(cmd, check=True)
++        shutil.move(tmp_output_video_path, output_video_path)
++    finally:
++        Path(tmp_concatenate_path).unlink(missing_ok=True)
++        Path(tmp_output_video_path).unlink(missing_ok=True)
+ 
+ 
+ class _CameraEncoderThread(threading.Thread):
+diff --git a/src/lerobot/envs/configs.py b/src/lerobot/envs/configs.py
+index 312b0262..016cbb9b 100644
+--- a/src/lerobot/envs/configs.py
++++ b/src/lerobot/envs/configs.py
+@@ -301,21 +301,73 @@ class HILSerlProcessorConfig:
+     max_gripper_pos: float | None = 100.0
+ 
+ 
+-@EnvConfig.register_subclass(name="gym_manipulator")
++@EnvConfig.register_subclass("gym_manipulator")
+ @dataclass
+ class HILSerlRobotEnvConfig(EnvConfig):
+-    """Configuration for the HILSerlRobotEnv environment."""
+-
+     robot: RobotConfig | None = None
+     teleop: TeleoperatorConfig | None = None
+-    processor: HILSerlProcessorConfig = field(default_factory=HILSerlProcessorConfig)
+-
++    processor: HILSerlProcessorConfig = field(default_factory=HILSerlProcessorConfig)
+     name: str = "real_robot"
+ 
++    features: dict[str, PolicyFeature] = field(
++        default_factory=lambda: {
++            ACTION: PolicyFeature(
++                type=FeatureType.ACTION,
++                shape=(4,),
++            ),
++            "agent_pos": PolicyFeature(
++                type=FeatureType.STATE,
++                shape=(18,),
++            ),
++            "pixels.front": PolicyFeature(
++                type=FeatureType.VISUAL,
++                shape=(128, 128, 3),
++            ),
++            "pixels.wrist": PolicyFeature(
++                type=FeatureType.VISUAL,
++                shape=(128, 128, 3),
++            ),
++        }
++    )
++
++    features_map: dict[str, str] = field(
++        default_factory=lambda: {
++            ACTION: ACTION,
++            "agent_pos": "observation.state",
++            "pixels.front": "observation.images.front",
++            "pixels.wrist": "observation.images.wrist",
++        }
++    )
++
++    @property
++    def package_name(self) -> str:
++        if self.name == "gym_hil":
++            return "gym_hil"
++        return super().package_name
++
++    @property
++    def gym_id(self) -> str:
++        if self.name == "gym_hil":
++            return f"gym_hil/{self.task}"
++        return super().gym_id
++
+     @property
+     def gym_kwargs(self) -> dict:
++        if self.name == "gym_hil":
++            return {
++                "image_obs": True,
++                "render_mode": "human",
++            }
+         return {}
+ 
++    def get_env_processors(self):
++        if self.name == "gym_hil":
++            return (
++                lambda observation: observation,
++                lambda action: action,
++            )
++        return super().get_env_processors()
++
+ 
+ @EnvConfig.register_subclass("libero")
+ @dataclass
+diff --git a/src/lerobot/rl/gym_manipulator.py b/src/lerobot/rl/gym_manipulator.py
+index 03f7b4ee..41410d94 100644
+--- a/src/lerobot/rl/gym_manipulator.py
++++ b/src/lerobot/rl/gym_manipulator.py
+@@ -25,6 +25,7 @@ import torch
+ 
+ from lerobot.cameras import opencv  # noqa: F401
+ from lerobot.configs import parser
++from lerobot.configs.video import RGBEncoderConfig
+ from lerobot.datasets import LeRobotDataset
+ from lerobot.envs import HILSerlRobotEnvConfig
+ from lerobot.model import RobotKinematics
+@@ -685,6 +686,13 @@ def control_loop(
+             image_writer_threads=4,
+             image_writer_processes=0,
+             features=features,
++            rgb_encoder=RGBEncoderConfig(
++                vcodec="h264",
++                pix_fmt="yuv420p",
++                crf=23,
++            ),
++            encoder_threads=2,
++            streaming_encoding=True,
+         )
+ 
+     episode_idx = 0
+diff --git a/src/lerobot/scripts/lerobot_eval.py b/src/lerobot/scripts/lerobot_eval.py
+index 7629d62e..27b0e68c 100644
+--- a/src/lerobot/scripts/lerobot_eval.py
++++ b/src/lerobot/scripts/lerobot_eval.py
+@@ -479,6 +479,11 @@ def eval_policy(
+     threads = []  # for video saving threads
+     n_episodes_rendered = 0  # for saving the correct number of videos
+ 
++    def compose_rendered_frame(rendered_frame):
++        if isinstance(rendered_frame, (list, tuple)):
++            return np.concatenate(rendered_frame, axis=1)
++        return rendered_frame
++
+     # Callback for visualization.
+     def render_frame(env: gym.vector.VectorEnv):
+         # noqa: B023
+@@ -486,11 +491,15 @@ def eval_policy(
+             return
+         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
+         if isinstance(env, gym.vector.SyncVectorEnv):
+-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
++            ep_frames.append(
++                np.stack([compose_rendered_frame(env.envs[i].render()) for i in range(n_to_render_now)])
++            )  # noqa: B023
+         elif hasattr(env, "call"):
+             # Here we must render all frames and discard any we don't need.
+             # Covers AsyncVectorEnv and _LazyAsyncVectorEnv (which wraps one).
+-            ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
++            ep_frames.append(
++                np.stack([compose_rendered_frame(frame) for frame in env.call("render")[:n_to_render_now]])
++            )
+ 
+     if max_episodes_rendered > 0:
+         video_paths: list[str] = []
+diff --git a/src/lerobot/utils/io_utils.py b/src/lerobot/utils/io_utils.py
+index 3ef793a2..ae155803 100644
+--- a/src/lerobot/utils/io_utils.py
++++ b/src/lerobot/utils/io_utils.py
+@@ -63,6 +63,11 @@ def write_video(video_path: str | Path, stacked_frames: list, fps: int) -> None:
+     require_package("av", extra="av-dep")
+     import av
+ 
++    stacked_frames = [
++        frame_array[0] if frame_array.ndim == 4 and frame_array.shape[0] == 1 else frame_array
++        for frame_array in stacked_frames
++    ]
++
+     with av.open(str(video_path), mode="w") as container:
+         orig_height, orig_width = stacked_frames[0].shape[:2]
+         # yuv420p requires even dimensions; crop by one pixel if needed
