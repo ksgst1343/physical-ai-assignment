@@ -8,6 +8,7 @@ MuJoCo 上の Panda ロボットアームに、キーボード操作で収集し
 
 - データセット: [ksgst1343/panda_pick_cube_v3](https://huggingface.co/datasets/ksgst1343/panda_pick_cube_v3)
 - 学習済みモデル: [ksgst1343/panda_pick_cube_act_v3](https://huggingface.co/ksgst1343/panda_pick_cube_act_v3)
+- 動画: [Youtube](https://www.youtube.com/watch?v=elGLhVowHAU)
 
 GitHub には再現に必要な設定、コマンド、補助スクリプト、LeRobot への最小パッチだけを置いています。データセット本体、モデル重み、評価動画、学習出力はサイズが大きいため含めていません。
 
